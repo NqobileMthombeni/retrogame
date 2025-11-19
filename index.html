@@ -294,7 +294,7 @@
                 <div class="retro-col" id="col-discover">
                     <div class="col-header">
                         <div class="col-title"><span>🏕️</span> What Did We Discover?</div>
-                        <div class="col-desc">New learnings, interesting finds, or data insights.</div>
+                        <div class="col-desc">New learnings, interesting finds, or interesting insights.</div>
                     </div>
                     <div class="notes-container" id="notes-discover"></div>
                     <div style="margin-top: auto; padding-top: 10px;">
@@ -327,18 +327,6 @@
                     </div>
                 </div>
 
-                <div class="retro-col" id="col-pack">
-                    <div class="col-header">
-                        <div class="col-title"><span>🎒</span> Pack for Next Sprint</div>
-                        <div class="col-desc">Action items, new tools, or process changes.</div>
-                    </div>
-                    <div class="notes-container" id="notes-pack"></div>
-                    <div style="margin-top: auto; padding-top: 10px;">
-                        <input type="text" class="login-input" style="margin: 0 0 10px 0;" placeholder="Add note..." onkeydown="handleNoteKey(event, 'pack')">
-                        <button class="btn btn-secondary" style="width: 100%; padding: 8px;" onclick="addNoteFromInput('pack')">+ Add</button>
-                    </div>
-                </div>
-
                 <div class="retro-col" id="col-mvp">
                     <div class="col-header">
                         <div class="col-title"><span>👑</span> Sprint MVP</div>
@@ -348,6 +336,18 @@
                     <div style="margin-top: auto; padding-top: 10px;">
                         <input type="text" class="login-input" style="margin: 0 0 10px 0;" placeholder="Nominate MVP..." onkeydown="handleNoteKey(event, 'mvp')">
                         <button class="btn btn-secondary" style="width: 100%; padding: 8px;" onclick="addNoteFromInput('mvp')">+ Add</button>
+                    </div>
+                </div>
+
+                <div class="retro-col" id="col-pack">
+                    <div class="col-header">
+                        <div class="col-title"><span>🎒</span> Pack for Next Sprint</div>
+                        <div class="col-desc">Action items, new tools, or process changes.</div>
+                    </div>
+                    <div class="notes-container" id="notes-pack"></div>
+                    <div style="margin-top: auto; padding-top: 10px;">
+                        <input type="text" class="login-input" style="margin: 0 0 10px 0;" placeholder="Add note..." onkeydown="handleNoteKey(event, 'pack')">
+                        <button class="btn btn-secondary" style="width: 100%; padding: 8px;" onclick="addNoteFromInput('pack')">+ Add</button>
                     </div>
                 </div>
 
@@ -396,7 +396,179 @@
         let currentUser = { name: "", role: "scout" };
         let myQuestionText = "";
 
-        // --- Logic ---
+        // --- Shared storage keys and in-memory structures ---
+        const STORAGE_KEYS = {
+            LOCKED_DATA: 'retro_locked_data_v1',
+            NOTES: 'retro_notes_v1'
+        };
+
+        // notesByColumn holds arrays of note objects for each column
+        // shape: { discover: [{id, text, author, timestamp, rot}], highlights: [...], ... }
+        let notesByColumn = {
+            discover: [],
+            highlights: [],
+            trip: [],
+            mvp: [],
+            pack: [],
+            ask: []
+        };
+
+        // Replace MOCK_LOCKED_DATA with a loadable shared array
+        function loadState() {
+            // load locked data
+            const lockedJson = localStorage.getItem(STORAGE_KEYS.LOCKED_DATA);
+            if (lockedJson) {
+                try {
+                    const parsed = JSON.parse(lockedJson);
+                    // ensure array
+                    if (Array.isArray(parsed)) {
+                        MOCK_LOCKED_DATA.length = 0;
+                        parsed.forEach(item => MOCK_LOCKED_DATA.push(item));
+                    }
+                } catch(e) { console.warn('Failed to parse locked data', e); }
+            }
+
+            // load notes
+            const notesJson = localStorage.getItem(STORAGE_KEYS.NOTES);
+            if (notesJson) {
+                try {
+                    const parsed = JSON.parse(notesJson);
+                    if (parsed && typeof parsed === 'object') {
+                        Object.keys(notesByColumn).forEach(col => {
+                            notesByColumn[col] = Array.isArray(parsed[col]) ? parsed[col] : [];
+                        });
+                    }
+                } catch(e) { console.warn('Failed to parse notes', e); }
+            }
+        }
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEYS.LOCKED_DATA, JSON.stringify(MOCK_LOCKED_DATA));
+                localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(notesByColumn));
+            } catch(e) { console.warn('Failed to save state', e); }
+        }
+
+        // Render sticky notes from notesByColumn (shared board)
+        function renderNotes() {
+            Object.keys(notesByColumn).forEach(colId => {
+                const container = document.getElementById('notes-' + colId);
+                if (!container) return;
+                container.innerHTML = '';
+                notesByColumn[colId].forEach(noteObj => {
+                    const note = document.createElement('div');
+                    note.classList.add('sticky-note');
+                    note.innerText = noteObj.text;
+                    note.setAttribute('data-author', noteObj.author + ' • ' + new Date(noteObj.timestamp).toLocaleTimeString());
+                    note.style.transform = `rotate(${noteObj.rot}deg)`;
+                    container.appendChild(note);
+                });
+            });
+        }
+
+        // Update lock logic to persist and broadcast
+        function lockQuestion() {
+            document.getElementById('lock-section').classList.add('hidden');
+            document.getElementById('post-lock-msg').classList.remove('hidden');
+
+            const entry = { name: currentUser.name + " (You)", questionText: myQuestionText, timestamp: new Date().toISOString() };
+            MOCK_LOCKED_DATA.push(entry);
+            saveState();
+            renderLockedList();
+        }
+
+        // Persisting notes when added
+        function addNoteFromInput(colId) {
+            const col = document.getElementById('col-' + colId);
+            const input = col.querySelector('input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            const rot = Math.random() * 4 - 2;
+            const noteObj = {
+                id: 'note-' + Date.now(),
+                text,
+                author: currentUser.name || 'Anonymous',
+                timestamp: new Date().toISOString(),
+                rot
+            };
+
+            // add to shared column data and save
+            notesByColumn[colId].push(noteObj);
+            saveState();
+
+            // render updated notes for everyone
+            renderNotes();
+
+            input.value = "";
+        }
+
+        // Render locked list using stored data
+        function renderLockedList() {
+            const list = document.getElementById('admin-list');
+            if (currentUser.role !== 'leader') {
+                list.innerHTML = `<div style="text-align:center; padding: 40px; color: #64748b;">
+                    <div style="font-size: 2rem;">🕵️</div>
+                    <p>Only the <strong>Camp Leader</strong> can see the locked question list.</p>
+                </div>`;
+                return;
+            }
+
+            list.innerHTML = "";
+            // sort by timestamp (oldest first)
+            const copy = MOCK_LOCKED_DATA.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+            copy.forEach(data => {
+                const entry = document.createElement('div');
+                const isMe = data.name.includes('(You)');
+                const borderColor = isMe ? '#22c55e' : '#f97316';
+
+                entry.innerHTML = `
+                    <div style="margin-bottom: 10px; padding: 12px; background: #0f172a; border-left: 3px solid ${borderColor}; border-radius: 4px;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <strong style="color: #f1f5f9;">${data.name}</strong>
+                            <span style="font-size:0.7rem; background: #334155; padding: 2px 6px; border-radius: 4px; color: #94a3b8;">LOCKED</span>
+                        </div>
+                        <div style="margin-top: 5px; color: ${isMe ? '#86efac' : '#cbd5e1'}; font-size: 0.95rem;">
+                            ${data.questionText}
+                        </div>
+                        <div style="margin-top:6px; font-size:0.75rem; color:#64748b;">${new Date(data.timestamp).toLocaleString()}</div>
+                    </div>
+                `;
+                list.appendChild(entry);
+            });
+        }
+
+        // On app start, load shared state and render
+        document.addEventListener('DOMContentLoaded', function() {
+            loadState();
+            renderNotes();
+            renderLockedList();
+
+            // restore display-name if previously set in session
+            const savedName = sessionStorage.getItem('retro_name');
+            if (savedName) {
+                currentUser.name = savedName;
+                document.getElementById('display-name').textContent = currentUser.name;
+            }
+        });
+
+        // save user name to session when joining camp
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const nameInput = document.getElementById('username-input').value.trim();
+            if(!nameInput) return;
+            currentUser.name = nameInput;
+            sessionStorage.setItem('retro_name', currentUser.name);
+            if (currentUser.name.toLowerCase() === 'camp leader') {
+                currentUser.role = 'leader';
+                document.getElementById('download-btn-ice').classList.remove('hidden');
+                document.getElementById('download-btn-retro').classList.remove('hidden');
+            }
+            document.getElementById('display-name').textContent = currentUser.name;
+            document.getElementById('display-role').textContent = currentUser.role.toUpperCase();
+            switchScreen('icebreaker-screen');
+            renderLockedList();
+        });
 
         // 1. Login
         document.getElementById('login-form').addEventListener('submit', function(e) {
@@ -462,13 +634,14 @@
             document.getElementById('lock-section').classList.add('hidden');
             document.getElementById('post-lock-msg').classList.remove('hidden');
 
-            MOCK_LOCKED_DATA.push({ name: currentUser.name + " (You)", questionText: myQuestionText });
+            const entry = { name: currentUser.name + " (You)", questionText: myQuestionText, timestamp: new Date().toISOString() };
+            MOCK_LOCKED_DATA.push(entry);
+            saveState();
             renderLockedList();
         }
 
         function renderLockedList() {
             const list = document.getElementById('admin-list');
-            
             if (currentUser.role !== 'leader') {
                 list.innerHTML = `<div style="text-align:center; padding: 40px; color: #64748b;">
                     <div style="font-size: 2rem;">🕵️</div>
@@ -477,12 +650,13 @@
                 return;
             }
 
-            list.innerHTML = ""; 
-
-            MOCK_LOCKED_DATA.forEach(data => {
+            list.innerHTML = "";
+            // sort by timestamp (oldest first)
+            const copy = MOCK_LOCKED_DATA.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+            copy.forEach(data => {
                 const entry = document.createElement('div');
-                const isMe = data.name.includes("(You)");
-                const borderColor = isMe ? "#22c55e" : "#f97316";
+                const isMe = data.name.includes('(You)');
+                const borderColor = isMe ? '#22c55e' : '#f97316';
 
                 entry.innerHTML = `
                     <div style="margin-bottom: 10px; padding: 12px; background: #0f172a; border-left: 3px solid ${borderColor}; border-radius: 4px;">
@@ -493,6 +667,7 @@
                         <div style="margin-top: 5px; color: ${isMe ? '#86efac' : '#cbd5e1'}; font-size: 0.95rem;">
                             ${data.questionText}
                         </div>
+                        <div style="margin-top:6px; font-size:0.75rem; color:#64748b;">${new Date(data.timestamp).toLocaleString()}</div>
                     </div>
                 `;
                 list.appendChild(entry);
@@ -515,16 +690,22 @@
             
             if (!text) return;
 
-            const noteContainer = document.getElementById('notes-' + colId);
-            const note = document.createElement('div');
-            note.classList.add('sticky-note');
-            note.innerText = text;
-            note.setAttribute('data-author', currentUser.name);
-            
-            const rot = Math.random() * 4 - 2; 
-            note.style.transform = `rotate(${rot}deg)`;
+            const rot = Math.random() * 4 - 2;
+            const noteObj = {
+                id: 'note-' + Date.now(),
+                text,
+                author: currentUser.name || 'Anonymous',
+                timestamp: new Date().toISOString(),
+                rot
+            };
 
-            noteContainer.appendChild(note);
+            // add to shared column data and save
+            notesByColumn[colId].push(noteObj);
+            saveState();
+
+            // render updated notes for everyone
+            renderNotes();
+
             input.value = "";
         }
 
@@ -542,6 +723,38 @@
         function endSession() {
             switchScreen('end-screen');
         }
+
+        // On app start, load shared state and render
+        document.addEventListener('DOMContentLoaded', function() {
+            loadState();
+            renderNotes();
+            renderLockedList();
+
+            // restore display-name if previously set in session
+            const savedName = sessionStorage.getItem('retro_name');
+            if (savedName) {
+                currentUser.name = savedName;
+                document.getElementById('display-name').textContent = currentUser.name;
+            }
+        });
+
+        // save user name to session when joining camp
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const nameInput = document.getElementById('username-input').value.trim();
+            if(!nameInput) return;
+            currentUser.name = nameInput;
+            sessionStorage.setItem('retro_name', currentUser.name);
+            if (currentUser.name.toLowerCase() === 'camp leader') {
+                currentUser.role = 'leader';
+                document.getElementById('download-btn-ice').classList.remove('hidden');
+                document.getElementById('download-btn-retro').classList.remove('hidden');
+            }
+            document.getElementById('display-name').textContent = currentUser.name;
+            document.getElementById('display-role').textContent = currentUser.role.toUpperCase();
+            switchScreen('icebreaker-screen');
+            renderLockedList();
+        });
     </script>
 </body>
 </html>
